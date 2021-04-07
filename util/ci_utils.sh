@@ -37,7 +37,7 @@ PIP_VER="20.2.4"
 WHEEL_VER="0.35.1"
 STOOLS_VER="50.3.2"
 PYTEST_VER="6.0.1"
-SCIPY_VER="1.4.1"
+SCIPY_VER="1.5.4"
 YAPF_VER="0.30.0"
 
 # Documentation
@@ -56,14 +56,7 @@ install_cuda_toolkit() {
     $SUDO apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/7fa2af80.pub
     $SUDO apt-add-repository "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64 /"
     $SUDO apt-get install --yes --no-install-recommends \
-        "cuda-minimal-build-${CUDA_VERSION[0]}" \
-        "cuda-cusolver-dev-${CUDA_VERSION[0]}" \
-        "cuda-cusparse-dev-${CUDA_VERSION[0]}" \
-        "cuda-curand-dev-${CUDA_VERSION[0]}" \
-        "cuda-cufft-dev-${CUDA_VERSION[0]}" \
-        "cuda-nvrtc-dev-${CUDA_VERSION[0]}" \
-        "cuda-nvtx-${CUDA_VERSION[0]}" \
-        "cuda-npp-dev-${CUDA_VERSION[0]}" \
+        "cuda-toolkit-${CUDA_VERSION[0]}" \
         libcublas-dev
     if [ "${CUDA_VERSION[1]}" == "10.1" ]; then
         echo "CUDA 10.1 needs CUBLAS 10.2. Symlinks ensure this is found by cmake"
@@ -400,17 +393,20 @@ run_cpp_unit_tests() {
 # test_cpp_example runExample
 # Need variable OPEN3D_INSTALL_DIR
 test_cpp_example() {
-
-    cd ../docs/_static/C++
-    mkdir -p build
+    # Now I am in Open3D/build/
+    cd ..
+    git clone https://github.com/intel-isl/open3d-cmake-find-package.git
+    cd open3d-cmake-find-package
+    mkdir build
     cd build
     cmake -DCMAKE_INSTALL_PREFIX=${OPEN3D_INSTALL_DIR} ..
     make -j"$NPROC" VERBOSE=1
     runExample="$1"
     if [ "$runExample" == ON ]; then
-        ./TestVisualizer
+        ./Draw --skip-for-unit-test
     fi
-    cd ../../../../build
+    # Now I am in Open3D/open3d-cmake-find-package/build/
+    cd ../../build
 }
 
 # Install dependencies needed for building documentation (on Ubuntu 18.04)
@@ -516,36 +512,6 @@ build_docs() {
     cd ../docs # To Open3D/docs
     python make_docs.py $DOC_ARGS --pyapi_rst=always --execute_notebooks=never --sphinx --doxygen
     set +x # Echo commands off
-}
-
-install_arm64_dependencies() {
-    apt-get update -q -y
-    apt-get install -y apt-utils build-essential git wget
-    apt-get install -y python3 python3-dev python3-pip python3-virtualenv
-    apt-get install -y xorg-dev libglu1-mesa-dev ccache
-    apt-get install -y libblas-dev liblapack-dev liblapacke-dev libssl-dev
-    apt-get install -y libsdl2-dev libc++-7-dev libc++abi-7-dev libxi-dev
-    apt-get install -y libudev-dev autoconf libtool # librealsense
-    apt-get install -y clang-7
-    update-alternatives --install /usr/bin/clang clang /usr/bin/clang-7 100
-    update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-7 100
-    update-alternatives --install /usr/bin/cc cc /usr/bin/clang 100
-    update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++ 100
-    /usr/sbin/update-ccache-symlinks
-    echo 'export PATH="/usr/lib/ccache:$PATH"' | tee -a ~/.bashrc
-    virtualenv --python=$(which python) ${HOME}/venv
-    source ${HOME}/venv/bin/activate
-    which python
-    python --version
-    pip install pytest=="$PYTEST_VER" -U
-    pip install wheel=="$WHEEL_VER" -U
-    # Get pre-compiled CMake
-    wget https://github.com/intel-isl/Open3D/releases/download/v0.11.0/cmake-3.18-aarch64.tar.gz
-    tar -xvf cmake-3.18-aarch64.tar.gz
-    cp -ar cmake-3.18-aarch64 ${HOME}
-    PATH=${HOME}/cmake-3.18-aarch64/bin:$PATH
-    which cmake
-    cmake --version
 }
 
 maximize_ubuntu_github_actions_build_space() {

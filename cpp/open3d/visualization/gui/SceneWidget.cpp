@@ -3,7 +3,7 @@
 // ----------------------------------------------------------------------------
 // The MIT License (MIT)
 //
-// Copyright (c) 2018 www.open3d.org
+// Copyright (c) 2021 www.open3d.org
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -312,6 +312,10 @@ public:
         return *interactor_;
     }
 
+    Eigen::Vector3f GetCenterOfRotation() const {
+        return interactor_->GetCenterOfRotation();
+    }
+
     void SetCenterOfRotation(const Eigen::Vector3f& center) {
         interactor_->SetCenterOfRotation(center);
     }
@@ -475,12 +479,12 @@ private:
                                 int y) {
         const int radius_px = 2;  // should be even;  total size is 2*r+1
         float far_z = 0.999999f;  // 1.0 - epsilon
-        float win_z = (1.0 - *depth_img->PointerAt<float>(x, y));
+        float win_z = *depth_img->PointerAt<float>(x, y);
         if (win_z >= far_z) {
             for (int v = y - radius_px; v < y + radius_px; ++v) {
                 for (int u = x - radius_px; u < x + radius_px; ++u) {
                     float z = *depth_img->PointerAt<float>(x, y);
-                    win_z = (1.0 - std::min(win_z, z));
+                    win_z = std::min(win_z, z);
                 }
             }
         }
@@ -592,6 +596,14 @@ public:
         ibl_->GetMatrixInteractor().SetBoundingBox(bounds);
         model_->GetMatrixInteractor().SetBoundingBox(bounds);
         pick_->GetMatrixInteractor().SetBoundingBox(bounds);
+    }
+
+    Eigen::Vector3f GetCenterOfRotation() const {
+        if (GetControls() == SceneWidget::Controls::ROTATE_CAMERA_SPHERE) {
+            return rotate_sphere_->GetCenterOfRotation();
+        } else {
+            return rotate_->GetCenterOfRotation();
+        }
     }
 
     void SetCenterOfRotation(const Eigen::Vector3f& center) {
@@ -723,7 +735,12 @@ private:
 };
 
 // ----------------------------------------------------------------------------
+namespace {
+static int g_next_button_id = 1;
+}  // namespace
+
 struct SceneWidget::Impl {
+    std::string id_;
     std::shared_ptr<rendering::Open3DScene> scene_;
     geometry::AxisAlignedBoundingBox bounds_;
     std::shared_ptr<Interactors> controls_;
@@ -761,13 +778,21 @@ struct SceneWidget::Impl {
     }
 };
 
-SceneWidget::SceneWidget() : impl_(new Impl()) {}
+SceneWidget::SceneWidget() : impl_(new Impl()) {
+    impl_->id_ = std::string("SceneWidget##widget3d_") +
+                 std::to_string(g_next_button_id++);
+}
 
 SceneWidget::~SceneWidget() {
     SetScene(nullptr);  // will do any necessary cleanup
 }
 
 void SceneWidget::SetFrame(const Rect& f) {
+    // Early exit if frame hasn't changed because changing frame size causes GPU
+    // memory re-allocations that are best avoided if unecessary
+    auto old_frame = GetFrame();
+    if (f.width == old_frame.width && f.height == old_frame.height) return;
+
     Super::SetFrame(f);
 
     impl_->controls_->SetViewSize(Size(f.width, f.height));
@@ -797,6 +822,14 @@ void SceneWidget::LookAt(const Eigen::Vector3f& center,
     GetCamera()->LookAt(center, eye, up);
     impl_->controls_->SetCenterOfRotation(center);
     impl_->UpdateFarPlane(GetFrame(), GetCamera()->GetFieldOfView());
+}
+
+Eigen::Vector3f SceneWidget::GetCenterOfRotation() const {
+    return impl_->controls_->GetCenterOfRotation();
+}
+
+void SceneWidget::SetCenterOfRotation(const Eigen::Vector3f& center) {
+    impl_->controls_->SetCenterOfRotation(center);
 }
 
 void SceneWidget::SetOnCameraChanged(
@@ -998,30 +1031,25 @@ void SceneWidget::RemoveLabel(std::shared_ptr<Label3D> label) {
     }
 }
 
-void SceneWidget::Layout(const Theme& theme) {
-    Super::Layout(theme);
-    // The UI may have changed size such that the scene has been exposed. Need
-    // to force a redraw in that case.
+void SceneWidget::ClearLabels() { impl_->labels_3d_.clear(); }
 
-    ForceRedraw();
-}
+void SceneWidget::Layout(const Theme& theme) { Super::Layout(theme); }
 
 Widget::DrawResult SceneWidget::Draw(const DrawContext& context) {
+    const auto f = GetFrame();
+
     // If the widget has changed size we need to update the viewport and the
     // camera. We can't do it in SetFrame() because we need to know the height
     // of the window to convert to OpenGL coordinates for the viewport.
     if (impl_->frame_rect_changed_) {
         impl_->frame_rect_changed_ = false;
 
-        auto f = GetFrame();
         impl_->controls_->SetViewSize(Size(f.width, f.height));
         // GUI has origin of Y axis at top, but renderer has it at bottom
         // so we need to convert coordinates.
         int y = context.screenHeight - (f.height + f.y);
 
-        // auto view = impl_->scene_->GetView();
         impl_->scene_->SetViewport(f.x, y, f.width, f.height);
-        // view->SetViewport(f.x, y, f.width, f.height);
 
         auto* camera = GetCamera();
         float aspect = 1.0f;
@@ -1035,16 +1063,22 @@ Widget::DrawResult SceneWidget::Draw(const DrawContext& context) {
         impl_->controls_->SetPickNeedsRedraw();
     }
 
-    if (!impl_->labels_3d_.empty()) {
-        const auto f = GetFrame();
-        // Setup ImGUI
-        ImGui::SetNextWindowPos(ImVec2(float(f.x), float(f.y)));
-        ImGui::SetNextWindowSize(ImVec2(float(f.width), float(f.height)));
-        ImGui::Begin("3D Labels", nullptr,
-                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
-                             ImGuiWindowFlags_NoNav |
-                             ImGuiWindowFlags_NoBackground);
+    // The scene will be rendered to texture, so all we need to do is
+    // draw the image. This is just a pass-through, and the ImGuiFilamentBridge
+    // will blit the texture.
+    ImGui::SetNextWindowPos(ImVec2(float(f.x), float(f.y)));
+    ImGui::SetNextWindowSize(ImVec2(float(f.width), float(f.height)));
+    ImGui::Begin(impl_->id_.c_str(), nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                         ImGuiWindowFlags_NoNav |
+                         ImGuiWindowFlags_NoBackground);
 
+    auto render_tex = impl_->scene_->GetView()->GetColorBuffer();
+    ImTextureID image_id = reinterpret_cast<ImTextureID>(render_tex.GetId());
+    ImGui::Image(image_id, ImVec2(f.width, f.height), ImVec2(0.0f, 1.0f),
+                 ImVec2(1.0f, 0.0f));
+
+    if (!impl_->labels_3d_.empty()) {
         // Draw each text label
         for (const auto& l : impl_->labels_3d_) {
             auto ndc = GetCamera()->GetNDC(l->GetPosition());
@@ -1059,14 +1093,10 @@ Widget::DrawResult SceneWidget::Draw(const DrawContext& context) {
                                 color.GetBlue(), color.GetAlpha()},
                                "%s", l->GetText());
         }
-
-        ImGui::End();
     }
 
-    // The actual drawing is done later, at the end of drawing in
-    // Window::OnDraw(), in FilamentRenderer::Draw(). We can always
-    // return NONE because any changes this frame will automatically
-    // be rendered (unlike the ImGUI parts).
+    ImGui::End();
+
     return Widget::DrawResult::NONE;
 }
 

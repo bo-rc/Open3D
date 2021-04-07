@@ -174,8 +174,9 @@ void pybind_o3dvisualizer(py::module& m) {
             .def("add_geometry",
                  py::overload_cast<const std::string&,
                                    std::shared_ptr<geometry::Geometry3D>,
-                                   rendering::Material*, const std::string&,
-                                   double, bool>(&O3DVisualizer::AddGeometry),
+                                   const rendering::Material*,
+                                   const std::string&, double, bool>(
+                         &O3DVisualizer::AddGeometry),
                  "name"_a, "geometry"_a, "material"_a = nullptr, "group"_a = "",
                  "time"_a = 0.0, "is_visible"_a = true,
                  "Adds a geometry: geometry(name, geometry, material=None, "
@@ -232,6 +233,11 @@ void pybind_o3dvisualizer(py::module& m) {
                  "the name. This should be treated as read-only. Modify "
                  "visibility with show_geometry(), and other values by "
                  "removing the object and re-adding it with the new values")
+            .def("add_3d_label", &O3DVisualizer::Add3DLabel,
+                 "add_3d_label([x,y,z], text): displays text anchored at the "
+                 "3D coordinate specified")
+            .def("clear_3d_labels", &O3DVisualizer::Clear3DLabels,
+                 "Clears all 3D text")
             .def("setup_camera", &O3DVisualizer::SetupCamera,
                  "setup_camera(field_of_view, center, eye, up): sets the "
                  "camera view so that the camera is located at 'eye', pointing "
